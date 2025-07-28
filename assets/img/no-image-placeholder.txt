@@ -1,0 +1,3 @@
+<!-- This is a placeholder for no-image.jpg -->
+<!-- You should create or add a default "no image" picture in the assets/img/ folder -->
+<!-- For now, this file serves as a reminder to add the image -->
