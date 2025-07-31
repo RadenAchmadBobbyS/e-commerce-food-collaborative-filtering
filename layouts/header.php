@@ -1,5 +1,8 @@
 <?php 
-session_start(); 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 // Check if user is logged in for protected pages
 $protected_pages = ['rekomendasi.php', 'product.php'];
 $current_page = basename($_SERVER['PHP_SELF']);
@@ -14,7 +17,7 @@ if (in_array($current_page, $protected_pages) && !isset($_SESSION['user_id'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rekomendasi Makanan - Sistem Rekomendasi Cerdas</title>
+    <title>WRKP - Sistem Rekomendasi Cerdas</title>
     <link rel="stylesheet" href="../assets/css/style.css">
     <link rel="icon" type="image/x-icon" href="../assets/img/favicon.ico">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -26,6 +29,8 @@ if (in_array($current_page, $protected_pages) && !isset($_SESSION['user_id'])) {
             min-height: 100vh;
             margin: 0;
             padding: 0;
+            overflow-x: hidden;
+            position: relative;
         }
         
         .header-navbar {
@@ -33,6 +38,8 @@ if (in_array($current_page, $protected_pages) && !isset($_SESSION['user_id'])) {
             backdrop-filter: blur(10px);
             box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
             border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            position: relative;
+            z-index: 1050;
         }
         
         .navbar-brand {
@@ -85,12 +92,26 @@ if (in_array($current_page, $protected_pages) && !isset($_SESSION['user_id'])) {
             margin-left: 0.5rem;
         }
         
+        .user-dropdown {
+            position: relative;
+        }
+        
         .dropdown-menu {
             border: none;
             box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
             border-radius: 12px;
             padding: 0.5rem 0;
             min-width: 200px;
+            z-index: 1051;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            left: auto;
+            margin-top: 2px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            transform: translateY(0);
+            will-change: transform;
         }
         
         .dropdown-item {
@@ -380,13 +401,21 @@ if (in_array($current_page, $protected_pages) && !isset($_SESSION['user_id'])) {
         }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function submitLogout() {
+            const form = document.getElementById('logout-form');
+            if (form) {
+                form.submit();
+            }
+        }
+    </script>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg header-navbar">
         <div class="container">
             <a class="navbar-brand" href="home.php">
                 <span style="background: #e74c3c; color: white; padding: 0.25rem 0.5rem; border-radius: 50%; margin-right: 0.5rem; font-size: 1.2rem;">🍽️</span>
-                FoodRec
+                WRKP
             </a>
             
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
@@ -396,14 +425,14 @@ if (in_array($current_page, $protected_pages) && !isset($_SESSION['user_id'])) {
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item">
-                        <a class="nav-link <?= ($current_page == 'home.php') ? 'active' : '' ?>" href="home.php">
+                        <a class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'home.php') ? 'active' : '' ?>" href="home.php">
                             <i class="fas fa-home"></i> Beranda
                         </a>
                     </li>
                     
                     <?php if (isset($_SESSION['user_id'])): ?>
                         <li class="nav-item">
-                            <a class="nav-link <?= ($current_page == 'rekomendasi.php') ? 'active' : '' ?>" href="rekomendasi.php">
+                            <a class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'rekomendasi.php') ? 'active' : '' ?>" href="rekomendasi.php">
                                 <i class="fas fa-star"></i> Rekomendasi
                             </a>
                         </li>
@@ -414,19 +443,23 @@ if (in_array($current_page, $protected_pages) && !isset($_SESSION['user_id'])) {
                             </button>
                             <ul class="dropdown-menu dropdown-menu-end">
                                 <li>
-                                    <a class="dropdown-item" href="#" onclick="event.preventDefault(); document.getElementById('logout-form').submit();">
+                                    <a class="dropdown-item" href="#" onclick="submitLogout(); return false;">
                                         <i class="fas fa-sign-out-alt"></i> Logout
                                     </a>
                                 </li>
                             </ul>
                             
-                            <form id="logout-form" action="../process/logout_process.php" method="POST" style="display: none;">
+                            <?php 
+                            // Tentukan path logout berdasarkan lokasi file
+                            $logout_path = '../process/logout_process.php';
+                            ?>
+                            <form id="logout-form" action="<?= $logout_path ?>" method="POST" style="display: none;">
                                 <!-- Hidden form for logout -->
                             </form>
                         </li>
                     <?php else: ?>
                         <li class="nav-item">
-                            <a class="nav-link <?= ($current_page == 'login.php') ? 'active' : '' ?>" href="login.php">
+                            <a class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'login.php') ? 'active' : '' ?>" href="login.php">
                                 <i class="fas fa-sign-in-alt"></i> Login
                             </a>
                         </li>
@@ -435,6 +468,40 @@ if (in_array($current_page, $protected_pages) && !isset($_SESSION['user_id'])) {
             </div>
         </div>
     </nav>
+    
+    <script>
+        // Enhanced dropdown functionality with Bootstrap integration
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize Bootstrap dropdowns
+            const dropdownElementList = [].slice.call(document.querySelectorAll('.dropdown-toggle'));
+            const dropdownList = dropdownElementList.map(function(dropdownToggleEl) {
+                return new bootstrap.Dropdown(dropdownToggleEl, {
+                    autoClose: true,
+                    boundary: 'viewport'
+                });
+            });
+            
+            // Additional dropdown enhancements
+            const dropdownMenus = document.querySelectorAll('.dropdown-menu');
+            dropdownMenus.forEach(menu => {
+                // Prevent dropdown from closing when clicking inside menu items (except logout)
+                menu.addEventListener('click', function(e) {
+                    if (!e.target.closest('.logout-link')) {
+                        e.stopPropagation();
+                    }
+                });
+            });
+            
+            // Handle logout functionality
+            const logoutLinks = document.querySelectorAll('.logout-link');
+            logoutLinks.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    document.getElementById('logout-form').submit();
+                });
+            });
+        });
+    </script>
     
     <main class="main-content">
         <div class="container">

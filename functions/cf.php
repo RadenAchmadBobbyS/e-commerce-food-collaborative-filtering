@@ -1,6 +1,6 @@
 <?php
 function getRatings($pdo) {
-  $stmt = $pdo->query("SELECT * FROM ratings");
+  $stmt = $pdo->query("SELECT user_id, product_id, rating FROM ratings");
   $ratings = [];
   while ($row = $stmt->fetch()) {
     $ratings[$row['user_id']][$row['product_id']] = $row['rating'];
@@ -9,6 +9,12 @@ function getRatings($pdo) {
 }
 
 function pearson($ratings, $u1, $u2) {
+  // Validasi: pastikan kedua user memiliki rating
+  if (!isset($ratings[$u1]) || !isset($ratings[$u2]) || 
+      !is_array($ratings[$u1]) || !is_array($ratings[$u2])) {
+    return 0;
+  }
+  
   $common = array_intersect_key($ratings[$u1], $ratings[$u2]);
   $n = count($common);
   if ($n == 0) return 0;
@@ -31,11 +37,21 @@ function pearson($ratings, $u1, $u2) {
 
 function getRecommendations($pdo, $targetUser) {
   $ratings = getRatings($pdo);
+  
+  // Validasi: pastikan target user memiliki data rating
+  if (!isset($ratings[$targetUser]) || !is_array($ratings[$targetUser]) || empty($ratings[$targetUser])) {
+    return []; // Return empty array jika user belum pernah rating
+  }
+  
   $totals = [];
   $simSums = [];
 
   foreach ($ratings as $otherUser => $otherRatings) {
     if ($otherUser == $targetUser) continue;
+    
+    // Skip jika other user tidak memiliki rating yang valid
+    if (!is_array($otherRatings) || empty($otherRatings)) continue;
+    
     $sim = pearson($ratings, $targetUser, $otherUser);
     if ($sim <= 0) continue;
 

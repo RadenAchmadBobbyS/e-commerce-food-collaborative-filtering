@@ -5,7 +5,7 @@
         <div class="container">
             <div class="row">
                 <div class="col-md-8">
-                    <p>&copy; <?= date('Y') ?> FoodRec - Sistem Rekomendasi Makanan. Dibuat dengan ❤️</p>
+                    <p>&copy; <?= date('Y') ?> WRKP - Sistem Rekomendasi Makanan.</p>
                 </div>
                 <div class="col-md-4 text-end">
                     <a href="../admin/login.php" class="text-muted" style="font-size: 0.85rem;">

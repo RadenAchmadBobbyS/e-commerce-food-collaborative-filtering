@@ -1,11 +1,13 @@
 <?php 
-include '../layouts/header.php'; 
+session_start();
 
 // Redirect if already logged in
 if (isset($_SESSION['user_id'])) {
     header('Location: home.php');
     exit;
 }
+
+include '../layouts/header.php';
 
 // Display messages if any
 if (isset($_GET['message'])) {

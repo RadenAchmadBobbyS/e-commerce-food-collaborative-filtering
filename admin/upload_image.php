@@ -73,22 +73,7 @@ $products = $stmt->fetchAll();
     <title>Admin - Upload Image Produk</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-        }
-        .admin-navbar {
-            background: rgba(231, 76, 60, 0.95) !important;
-            backdrop-filter: blur(10px);
-        }
-        .admin-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 15px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-    </style>
+    <link href="assets/admin-style.css" rel="stylesheet">
 </head>
 <body>
     <!-- Admin Navbar -->
@@ -114,74 +99,145 @@ $products = $stmt->fetchAll();
         </div>
     </nav>
     <div class="container mt-4">
-        <div class="row justify-content-center">
-            <div class="col-md-10">
-                <div class="admin-card">
-                    <div class="card-header bg-danger text-white">
-                        <h3><i class="fas fa-upload"></i> Upload Image Produk</h3>
-                    </div>
-                    <div class="card-body">
-                        <?php if ($message): ?>
-                            <div class="alert alert-<?= $type === 'success' ? 'success' : 'danger' ?>" role="alert">
-                                <?= htmlspecialchars($message) ?>
-                            </div>
-                        <?php endif; ?>
+        <?php if ($message): ?>
+            <div class="alert alert-<?= $type === 'success' ? 'success' : 'danger' ?> alert-dismissible fade show" role="alert">
+                <?= htmlspecialchars($message) ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
 
+        <!-- Page Header -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="admin-card">
+                    <div class="card-header-custom">
+                        <h4 class="mb-1" style="font-size: 1.5rem; font-weight: 700;">
+                            <i class="fas fa-upload me-2"></i> Upload Image Produk
+                        </h4>
+                        <p class="mb-0 opacity-90" style="font-size: 1rem;">Kelola gambar produk untuk meningkatkan daya tarik visual</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Upload Form -->
+            <div class="col-md-6 mb-4">
+                <div class="admin-card h-100">
+                    <div class="p-4">
+                        <div class="icon-feature mb-3">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                        </div>
+                        <h5 class="card-title mb-3">Upload Image Baru</h5>
+                        
                         <form method="POST" enctype="multipart/form-data">
                             <div class="mb-3">
-                                <label for="product_id" class="form-label">Pilih Produk:</label>
-                                <select class="form-select" name="product_id" required>
+                                <label for="product_id" class="form-label fw-semibold">Pilih Produk:</label>
+                                <select class="form-select" name="product_id" required style="border-radius: 10px;">
                                     <option value="">-- Pilih Produk --</option>
                                     <?php foreach ($products as $product): ?>
+                                        <?php 
+                                        $hasImage = $product['image'] && file_exists("../assets/img/" . $product['image']);
+                                        $imageStatus = $hasImage ? '(Ada gambar)' : '(Belum ada gambar)';
+                                        ?>
                                         <option value="<?= $product['id'] ?>">
                                             <?= htmlspecialchars($product['name']) ?> 
-                                            (Current: <?= $product['image'] ?: 'No image' ?>)
+                                            <?= $imageStatus ?>
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>
 
-                            <div class="mb-3">
-                                <label for="image" class="form-label">Upload Image:</label>
-                                <input type="file" class="form-control" name="image" accept="image/*" required>
-                                <div class="form-text">Format: JPG, JPEG, PNG, GIF, WEBP. Maksimal 5MB.</div>
+                            <div class="mb-4">
+                                <label for="image" class="form-label fw-semibold">Upload Image:</label>
+                                <input type="file" class="form-control" name="image" accept="image/*" required style="border-radius: 10px;">
+                                <div class="form-text mt-2">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    Format: JPG, JPEG, PNG, GIF, WEBP. Maksimal 5MB.
+                                </div>
                             </div>
 
-                            <button type="submit" class="btn btn-danger">
-                                <i class="fas fa-upload"></i> Upload Image
-                            </button>
-                            <a href="dashboard.php" class="btn btn-secondary">
-                                <i class="fas fa-arrow-left"></i> Kembali ke Dashboard
-                            </a>
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn">
+                                    <i class="fas fa-upload me-2"></i> Upload Image
+                                </button>
+                                <a href="dashboard.php" class="btn btn-outline-secondary" style="border-radius: 15px;">
+                                    <i class="fas fa-arrow-left me-2"></i> Kembali ke Dashboard
+                                </a>
+                            </div>
                         </form>
                     </div>
                 </div>
+            </div>
 
-                <!-- Display current products with images -->
-                <div class="admin-card mt-4">
-                    <div class="card-header bg-info text-white">
-                        <h4><i class="fas fa-images"></i> Produk & Image Saat Ini</h4>
+            <!-- Preview Section -->
+            <div class="col-md-6 mb-4">
+                <div class="admin-card h-100">
+                    <div class="p-4">
+                        <div class="icon-feature mb-3">
+                            <i class="fas fa-eye"></i>
+                        </div>
+                        <h5 class="card-title mb-3">Preview & Info</h5>
+                        
+                        <div class="bg-light rounded-3 p-4 text-center" style="min-height: 200px; border: 2px dashed #dee2e6;">
+                            <i class="fas fa-image fa-3x text-muted mb-3"></i>
+                            <p class="text-muted mb-0">Preview gambar akan muncul di sini setelah dipilih</p>
+                        </div>
+                        
+                        <div class="mt-3">
+                            <h6 class="fw-semibold mb-2">Panduan Upload:</h6>
+                            <ul class="list-unstyled">
+                                <li class="mb-1"><i class="fas fa-check text-success me-2"></i> Resolusi optimal: 800x600px</li>
+                                <li class="mb-1"><i class="fas fa-check text-success me-2"></i> Rasio aspek 4:3 direkomendasikan</li>
+                                <li class="mb-1"><i class="fas fa-check text-success me-2"></i> Format terbaik: JPG atau PNG</li>
+                                <li class="mb-1"><i class="fas fa-check text-success me-2"></i> Ukuran file maksimal 5MB</li>
+                            </ul>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <div class="row">
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Products Gallery -->
+        <div class="row">
+            <div class="col-12">
+                <div class="admin-card">
+                    <div class="card-header-custom">
+                        <h4 class="mb-1" style="font-size: 1.25rem; font-weight: 700;">
+                            <i class="fas fa-images me-2"></i> Gallery Produk
+                        </h4>
+                        <p class="mb-0 opacity-90">Semua produk dan gambar yang tersedia saat ini</p>
+                    </div>
+                    <div class="p-4">
+                        <div class="row g-4">
                             <?php foreach ($products as $product): ?>
-                                <div class="col-md-4 mb-3">
-                                    <div class="card">
-                                        <?php if ($product['image'] && file_exists("../assets/img/" . $product['image'])): ?>
+                                <?php 
+                                $imageExists = $product['image'] && file_exists("../assets/img/" . $product['image']);
+                                ?>
+                                <div class="col-md-4 col-lg-3">
+                                    <div class="card h-100 border-0 shadow-sm" style="border-radius: 15px; overflow: hidden;">
+                                        <?php if ($imageExists): ?>
                                             <img src="../assets/img/<?= htmlspecialchars($product['image']) ?>" 
-                                                 class="card-img-top" style="height: 200px; object-fit: cover;" 
+                                                 class="card-img-top" style="height: 180px; object-fit: cover;" 
                                                  alt="<?= htmlspecialchars($product['name']) ?>">
                                         <?php else: ?>
                                             <div class="card-img-top bg-light d-flex align-items-center justify-content-center" 
-                                                 style="height: 200px;">
-                                                <span class="text-muted">No Image</span>
+                                                 style="height: 180px;">
+                                                <i class="fas fa-image fa-2x text-muted"></i>
                                             </div>
                                         <?php endif; ?>
-                                        <div class="card-body">
-                                            <h6 class="card-title"><?= htmlspecialchars($product['name']) ?></h6>
-                                            <small class="text-muted">
-                                                Image: <?= $product['image'] ?: 'Tidak ada' ?>
-                                            </small>
+                                        <div class="card-body p-3">
+                                            <h6 class="card-title mb-2 fw-semibold"><?= htmlspecialchars($product['name']) ?></h6>
+                                            <p class="card-text small text-muted mb-2">
+                                                <i class="fas fa-tag me-1"></i>
+                                                Status: <?= $imageExists ? '<span class="text-success">Ada gambar</span>' : '<span class="text-warning">Belum ada gambar</span>' ?>
+                                            </p>
+                                            <?php if ($product['image'] && !$imageExists): ?>
+                                                <p class="card-text small text-danger mb-0">
+                                                    <i class="fas fa-exclamation-triangle me-1"></i>
+                                                    File database: <?= htmlspecialchars($product['image']) ?> (tidak ditemukan)
+                                                </p>
+                                            <?php endif; ?>
                                         </div>
                                     </div>
                                 </div>
@@ -194,5 +250,36 @@ $products = $stmt->fetchAll();
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Image preview functionality
+        document.querySelector('input[name="image"]').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const previewContainer = document.querySelector('.bg-light.rounded-3');
+            
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewContainer.innerHTML = `
+                        <img src="${e.target.result}" class="img-fluid rounded" style="max-height: 200px; max-width: 100%;" alt="Preview">
+                        <p class="text-muted mt-2 mb-0"><small>Preview: ${file.name}</small></p>
+                    `;
+                };
+                reader.readAsDataURL(file);
+            } else {
+                previewContainer.innerHTML = `
+                    <i class="fas fa-image fa-3x text-muted mb-3"></i>
+                    <p class="text-muted mb-0">Preview gambar akan muncul di sini setelah dipilih</p>
+                `;
+            }
+        });
+        
+        // Product selection info
+        document.querySelector('select[name="product_id"]').addEventListener('change', function(e) {
+            const selectedOption = e.target.options[e.target.selectedIndex];
+            if (selectedOption.value) {
+                console.log('Product selected:', selectedOption.text);
+            }
+        });
+    </script>
 </body>
 </html>

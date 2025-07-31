@@ -1,4 +1,5 @@
 <?php 
+session_start();
 include '../layouts/header.php'; 
 require '../config/db.php';
 
@@ -6,7 +7,10 @@ require '../config/db.php';
 // Display messages if any
 if (isset($_GET['message'])) {
     $message_type = isset($_GET['type']) ? $_GET['type'] : 'info';
-    echo "<div class='message {$message_type}'>" . htmlspecialchars($_GET['message']) . "</div>";
+    echo "<div class='alert alert-{$message_type} alert-dismissible fade show' role='alert'>
+            " . htmlspecialchars($_GET['message']) . "
+            <button type='button' class='btn-close' data-bs-dismiss='alert'></button>
+          </div>";
 }
 
 if (!isset($_GET['id']) || !is_numeric($_GET['id'])) {
@@ -61,6 +65,14 @@ for ($i = 1; $i <= 5; $i++) {
 }
 ?>
 
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-4">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="home.php">Beranda</a></li>
+        <li class="breadcrumb-item active">Detail Produk</li>
+    </ol>
+</nav>
+
 <div style="max-width: 800px; margin: 0 auto;">
     <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; margin-bottom: 2rem;" class="product-detail">
         <div>
@@ -105,21 +117,21 @@ for ($i = 1; $i <= 5; $i++) {
                         </div>
                     <?php endif; ?>
                     
-                    <form method="POST" action="../process/rating_process.php" id="ratingForm">
+                    <form method="POST" action="../process/rating_process.php">
                         <input type="hidden" name="product_id" value="<?= $id ?>">
                         
-                        <div style="margin-bottom: 1rem;">
-                            <label style="display: block; margin-bottom: 0.5rem; font-weight: 500; color: #2c3e50;">
-                                Pilih Rating:
+                        <div style="margin-bottom: 1.5rem;">
+                            <label style="display: block; margin-bottom: 1rem; font-weight: 500; color: #2c3e50;">
+                                Pilih Rating (1-5):
                             </label>
-                            <div class="rating-select" style="display: flex; gap: 0.5rem;">
-                                <?php for ($i = 5; $i >= 1; $i--): ?>
-                                    <label style="cursor: pointer; padding: 0.5rem; border: 2px solid #ddd; border-radius: 8px; transition: all 0.3s ease; display: flex; align-items: center; gap: 0.5rem;">
+                            
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <?php for ($i = 1; $i <= 5; $i++): ?>
+                                    <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; padding: 8px 12px; border: 2px solid #ddd; border-radius: 8px; transition: all 0.3s;">
                                         <input type="radio" name="rating" value="<?= $i ?>" 
-                                               <?= ($userRating && $userRating['rating'] == $i) ? 'checked' : '' ?>
-                                               style="display: none;">
-                                        <span style="font-size: 1.2rem;">⭐</span>
-                                        <span><?= $i ?></span>
+                                               <?= ($userRating && $userRating['rating'] == $i) ? 'checked' : '' ?> 
+                                               required>
+                                        <span>⭐ <?= $i ?></span>
                                     </label>
                                 <?php endfor; ?>
                             </div>
@@ -167,46 +179,30 @@ for ($i = 1; $i <= 5; $i++) {
 </div>
 
 <style>
-.rating-select input[type="radio"]:checked + span + span,
-.rating-select input[type="radio"]:checked + span {
-    color: #f39c12;
+/* Rating form styles */
+input[type="radio"] {
+    margin-right: 5px;
 }
 
-.rating-select label:hover {
-    border-color: #3498db;
-    background-color: #f8f9fa;
+label:has(input[type="radio"]) {
+    transition: all 0.3s ease;
 }
 
-.rating-select input[type="radio"]:checked ~ label,
-.rating-select label:has(input[type="radio"]:checked) {
-    border-color: #f39c12;
-    background-color: #fff8e1;
+label:has(input[type="radio"]:checked) {
+    border-color: #f39c12 !important;
+    background-color: #fff8e1 !important;
+}
+
+label:has(input[type="radio"]):hover {
+    border-color: #3498db !important;
+    background-color: #f8f9fa !important;
 }
 
 @media (max-width: 768px) {
     .product-detail {
         grid-template-columns: 1fr !important;
     }
-    
-    .rating-select {
-        flex-direction: column !important;
-    }
 }
 </style>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const ratingLabels = document.querySelectorAll('.rating-select label');
-    
-    ratingLabels.forEach(label => {
-        label.addEventListener('click', function() {
-            // Remove active class from all labels
-            ratingLabels.forEach(l => l.classList.remove('active'));
-            // Add active class to clicked label
-            this.classList.add('active');
-        });
-    });
-});
-</script>
 
 <?php include '../layouts/footer.php'; ?>
