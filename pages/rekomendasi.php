@@ -64,19 +64,33 @@ try {
     } else {
         // Jika rekomendasi personal terlalu sedikit, tambahkan produk populer
         if (count($rekomendasi) < 8) {
-            $additionalStmt = $pdo->prepare("
-                SELECT p.id 
-                FROM products p 
-                LEFT JOIN ratings r ON p.id = r.product_id 
-                WHERE p.id NOT IN (" . str_repeat('?,', count($rekomendasi) - 1) . "?)
-                GROUP BY p.id 
-                ORDER BY AVG(r.rating) DESC, COUNT(r.id) DESC 
-                LIMIT ?
-            ");
-            $params = array_merge($rekomendasi, [12 - count($rekomendasi)]);
-            $additionalStmt->execute($params);
-            $additional = $additionalStmt->fetchAll(PDO::FETCH_COLUMN);
-            $rekomendasi = array_merge($rekomendasi, $additional);
+            $whereClause = '';
+            $params = [];
+            
+            if (!empty($rekomendasi)) {
+                $placeholders = str_repeat('?,', count($rekomendasi));
+                $placeholders = rtrim($placeholders, ','); // Remove trailing comma
+                $whereClause = 'WHERE p.id NOT IN (' . $placeholders . ')';
+                $params = $rekomendasi;
+            }
+            
+            $limitValue = 12 - count($rekomendasi);
+            if ($limitValue > 0) {
+                // Don't bind LIMIT value - use it directly in the SQL  
+                $sql = "
+                    SELECT p.id 
+                    FROM products p 
+                    LEFT JOIN ratings r ON p.id = r.product_id 
+                    $whereClause
+                    GROUP BY p.id 
+                    ORDER BY AVG(r.rating) DESC, COUNT(r.id) DESC 
+                    LIMIT " . intval($limitValue);
+                
+                $additionalStmt = $pdo->prepare($sql);
+                $additionalStmt->execute($params);
+                $additional = $additionalStmt->fetchAll(PDO::FETCH_COLUMN);
+                $rekomendasi = array_merge($rekomendasi, $additional);
+            }
         }
     }
 } catch (Exception $e) {
@@ -118,46 +132,95 @@ try {
     // Organize recommendations by category
     $recommendationsByCategory = [];
     
-    // Jika ada rekomendasi dari algoritma, gunakan itu terlebih dahulu
-    foreach ($rekomendasi as $pid) {
-        $stmt = $pdo->prepare("SELECT p.*, c.name as category_name, c.id as category_id,
-                              COALESCE(AVG(r.rating), 0) as avg_rating, COUNT(r.id) as total_ratings 
-                              FROM products p 
-                              LEFT JOIN categories c ON p.category_id = c.id
-                              LEFT JOIN ratings r ON p.id = r.product_id 
-                              WHERE p.id = ? 
-                              GROUP BY p.id");
-        $stmt->execute([$pid]);
-        $product = $stmt->fetch();
+    // Jika ada filter kategori spesifik, prioritaskan menampilkan SEMUA produk dari kategori tersebut
+    if ($categoryFilter) {
+        // Ambil semua produk dari kategori
+        $stmt = $pdo->prepare("
+            SELECT p.*, c.name as category_name
+            FROM products p 
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE p.category_id = ? 
+            ORDER BY p.id ASC
+        ");
+        $stmt->execute([$categoryFilter]);
+        $categoryProducts = $stmt->fetchAll();
         
-        if ($product) {
-            if ($categoryFilter && $product['category_id'] != $categoryFilter) {
-                continue; // Skip if not matching filter
+        // Tambahkan informasi rating untuk setiap produk
+        foreach ($categoryProducts as &$product) {
+            $ratingStmt = $pdo->prepare("
+                SELECT COUNT(*) as total_ratings, COALESCE(AVG(rating), 0) as avg_rating 
+                FROM ratings 
+                WHERE product_id = ?
+            ");
+            $ratingStmt->execute([$product['id']]);
+            $ratingData = $ratingStmt->fetch();
+            $product['total_ratings'] = (int)$ratingData['total_ratings'];
+            $product['avg_rating'] = (float)$ratingData['avg_rating'];
+        }
+        
+        // Urutkan berdasarkan rating: produk dengan rating terbanyak dulu, lalu rata-rata tertinggi
+        usort($categoryProducts, function($a, $b) {
+            if ($a['total_ratings'] != $b['total_ratings']) {
+                return $b['total_ratings'] - $a['total_ratings']; // Descending by total ratings
             }
+            if (abs($a['avg_rating'] - $b['avg_rating']) > 0.01) {
+                return $b['avg_rating'] <=> $a['avg_rating']; // Descending by avg rating
+            }
+            return $a['id'] - $b['id']; // Ascending by ID as tiebreaker
+        });
+        
+        if (!empty($categoryProducts)) {
+            $catName = $categoryProducts[0]['category_name'] ?: 'Tanpa Kategori';
+            $recommendationsByCategory[$catName] = $categoryProducts;
+        } else {
+            // Jika tidak ada produk dari kategori yang dipilih, ambil nama kategori dari database
+            $catStmt = $pdo->prepare("SELECT name FROM categories WHERE id = ?");
+            $catStmt->execute([$categoryFilter]);
+            $catData = $catStmt->fetch();
+            if ($catData) {
+                $recommendationsByCategory[$catData['name']] = [];
+            }
+        }
+    } else {
+        // Jika tidak ada filter kategori, gunakan rekomendasi dari algoritma terlebih dahulu
+        foreach ($rekomendasi as $pid) {
+            $stmt = $pdo->prepare("SELECT p.*, c.name as category_name, c.id as category_id,
+                                  COALESCE(AVG(r.rating), 0) as avg_rating, COUNT(r.id) as total_ratings 
+                                  FROM products p 
+                                  LEFT JOIN categories c ON p.category_id = c.id
+                                  LEFT JOIN ratings r ON p.id = r.product_id 
+                                  WHERE p.id = ? 
+                                  GROUP BY p.id");
+            $stmt->execute([$pid]);
+            $product = $stmt->fetch();
             
-            $catName = $product['category_name'] ?: 'Tanpa Kategori';
-            if (!isset($recommendationsByCategory[$catName])) {
-                $recommendationsByCategory[$catName] = [];
+            if ($product) {
+                $catName = $product['category_name'] ?: 'Tanpa Kategori';
+                if (!isset($recommendationsByCategory[$catName])) {
+                    $recommendationsByCategory[$catName] = [];
+                }
+                $recommendationsByCategory[$catName][] = $product;
             }
-            $recommendationsByCategory[$catName][] = $product;
         }
     }
     
     // Jika tidak ada kategori yang terisi atau terlalu sedikit, tambahkan produk dari setiap kategori
-    if (empty($recommendationsByCategory) || array_sum(array_map('count', $recommendationsByCategory)) < 6) {
+    $minProductsNeeded = $categoryFilter ? 1 : 6; // Jika ada filter kategori, minimal 1, jika tidak minimal 6
+    
+    // Untuk mode "Semua Kategori", pastikan setiap kategori memiliki representasi yang memadai
+    if (!$categoryFilter) {
+        // Periksa setiap kategori dan pastikan ada minimal 3-4 produk per kategori jika tersedia
         $categoriesStmt = $pdo->query("SELECT * FROM categories ORDER BY name ASC");
         $allCategories = $categoriesStmt->fetchAll();
         
         foreach ($allCategories as $category) {
-            if ($categoryFilter && $category['id'] != $categoryFilter) {
-                continue;
-            }
-            
             $catName = $category['name'];
             $currentCount = isset($recommendationsByCategory[$catName]) ? count($recommendationsByCategory[$catName]) : 0;
             
-            // Tambahkan produk dari kategori ini jika belum ada atau masih sedikit
-            if ($currentCount < 3) {
+            // Untuk mode "Semua Kategori", target minimal 4 produk per kategori (jika tersedia)
+            $targetPerCategory = 4;
+            
+            if ($currentCount < $targetPerCategory) {
                 $existingIds = isset($recommendationsByCategory[$catName]) ? 
                     array_column($recommendationsByCategory[$catName], 'id') : [];
                 
@@ -165,34 +228,113 @@ try {
                 $params = [$category['id']];
                 
                 if (!empty($existingIds)) {
-                    $excludeClause = ' AND p.id NOT IN (' . str_repeat('?,', count($existingIds) - 1) . '?)';
+                    $placeholders = str_repeat('?,', count($existingIds));
+                    $placeholders = rtrim($placeholders, ',');
+                    $excludeClause = ' AND p.id NOT IN (' . $placeholders . ')';
                     $params = array_merge($params, $existingIds);
                 }
                 
-                $additionalStmt = $pdo->prepare("
-                    SELECT p.*, c.name as category_name, c.id as category_id,
-                           COALESCE(AVG(r.rating), 0) as avg_rating, COUNT(r.id) as total_ratings 
-                    FROM products p 
-                    LEFT JOIN categories c ON p.category_id = c.id
-                    LEFT JOIN ratings r ON p.id = r.product_id 
-                    WHERE p.category_id = ? $excludeClause
-                    GROUP BY p.id 
-                    ORDER BY AVG(r.rating) DESC, COUNT(r.id) DESC, p.id ASC
-                    LIMIT ?
-                ");
-                
-                $params[] = 4 - $currentCount; // Tambahkan maksimal 4 produk per kategori
-                $additionalStmt->execute($params);
-                $additionalProducts = $additionalStmt->fetchAll();
-                
-                if (!isset($recommendationsByCategory[$catName])) {
-                    $recommendationsByCategory[$catName] = [];
+                $limitValue = $targetPerCategory - $currentCount;
+                if ($limitValue > 0) {
+                    try {
+                        $sql = "
+                            SELECT p.*, c.name as category_name, c.id as category_id,
+                                   COALESCE(AVG(r.rating), 0) as avg_rating, COUNT(r.id) as total_ratings 
+                            FROM products p 
+                            LEFT JOIN categories c ON p.category_id = c.id
+                            LEFT JOIN ratings r ON p.id = r.product_id 
+                            WHERE p.category_id = ?" . $excludeClause . "
+                            GROUP BY p.id 
+                            ORDER BY COUNT(r.id) DESC, AVG(r.rating) DESC, p.id ASC
+                            LIMIT " . intval($limitValue);
+                        
+                        $additionalStmt = $pdo->prepare($sql);
+                        $additionalStmt->execute($params);
+                        $additionalProducts = $additionalStmt->fetchAll();
+                        
+                        if (!isset($recommendationsByCategory[$catName])) {
+                            $recommendationsByCategory[$catName] = [];
+                        }
+                        
+                        $recommendationsByCategory[$catName] = array_merge(
+                            $recommendationsByCategory[$catName], 
+                            $additionalProducts
+                        );
+                    } catch (PDOException $e) {
+                        error_log("Category Query Error for {$catName}: " . $e->getMessage());
+                    }
+                }
+            }
+        }
+    } else {
+        // Kondisi original untuk filter kategori spesifik
+        if (empty($recommendationsByCategory)) {
+            $categoriesStmt = $pdo->query("SELECT * FROM categories ORDER BY name ASC");
+            $allCategories = $categoriesStmt->fetchAll();
+            
+            foreach ($allCategories as $category) {
+                if ($category['id'] != $categoryFilter) {
+                    continue;
                 }
                 
-                $recommendationsByCategory[$catName] = array_merge(
-                    $recommendationsByCategory[$catName], 
-                    $additionalProducts
-                );
+                $catName = $category['name'];
+                $currentCount = isset($recommendationsByCategory[$catName]) ? count($recommendationsByCategory[$catName]) : 0;
+                
+                // Tentukan batas produk berdasarkan filter kategori
+                $maxProductsPerCategory = 50; // Untuk filter kategori spesifik, tampilkan lebih banyak
+                $additionalLimit = 50; // Limit tambahan produk
+                
+                // Tambahkan produk dari kategori ini jika belum ada atau masih sedikit
+                if ($currentCount < $maxProductsPerCategory) {
+                    $existingIds = isset($recommendationsByCategory[$catName]) ? 
+                        array_column($recommendationsByCategory[$catName], 'id') : [];
+                    
+                    $excludeClause = '';
+                    $params = [$category['id']];
+                    
+                    if (!empty($existingIds)) {
+                        $placeholders = str_repeat('?,', count($existingIds));
+                        $placeholders = rtrim($placeholders, ','); // Remove trailing comma
+                        $excludeClause = ' AND p.id NOT IN (' . $placeholders . ')';
+                        $params = array_merge($params, $existingIds);
+                    }
+                    
+                    // Add limit parameter to params array
+                    $limitValue = $additionalLimit - $currentCount;
+                    if ($limitValue > 0) {
+                        // Don't bind LIMIT value - use it directly in the SQL
+                        try {
+                            $sql = "
+                                SELECT p.*, c.name as category_name, c.id as category_id,
+                                       COALESCE(AVG(r.rating), 0) as avg_rating, COUNT(r.id) as total_ratings 
+                                FROM products p 
+                                LEFT JOIN categories c ON p.category_id = c.id
+                                LEFT JOIN ratings r ON p.id = r.product_id 
+                                WHERE p.category_id = ?" . $excludeClause . "
+                                GROUP BY p.id 
+                                ORDER BY AVG(r.rating) DESC, COUNT(r.id) DESC, p.id ASC
+                                LIMIT " . intval($limitValue);
+                            
+                            $additionalStmt = $pdo->prepare($sql);
+                            $additionalStmt->execute($params);
+                            $additionalProducts = $additionalStmt->fetchAll();
+                            
+                            if (!isset($recommendationsByCategory[$catName])) {
+                                $recommendationsByCategory[$catName] = [];
+                            }
+                            
+                            $recommendationsByCategory[$catName] = array_merge(
+                                $recommendationsByCategory[$catName], 
+                                $additionalProducts
+                            );
+                        } catch (PDOException $e) {
+                            error_log("Category Query Error for {$catName}: " . $e->getMessage());
+                            error_log("SQL: " . $sql);
+                            error_log("Params: " . print_r($params, true));
+                            // Continue without this category's additional products
+                        }
+                    }
+                }
             }
         }
     }
@@ -232,7 +374,22 @@ try {
             <div class="category-section">
                 <div class="category-header">
                     <h3 class="category-title">
-                        <i class="fas fa-utensils text-danger"></i> <?= htmlspecialchars($categoryName) ?>
+                        <?php 
+                        // Menentukan ikon berdasarkan nama kategori
+                        $categoryIcon = 'fas fa-utensils'; // Default untuk makanan
+                        $categoryLower = strtolower($categoryName);
+                        
+                        if (strpos($categoryLower, 'minuman') !== false) {
+                            if (strpos($categoryLower, 'panas') !== false) {
+                                $categoryIcon = 'fas fa-mug-hot'; // Ikon untuk minuman panas
+                            } elseif (strpos($categoryLower, 'dingin') !== false) {
+                                $categoryIcon = 'fas fa-glass-water'; // Ikon untuk minuman dingin
+                            } else {
+                                $categoryIcon = 'fas fa-glass-whiskey'; // Ikon umum minuman
+                            }
+                        }
+                        ?>
+                        <i class="<?= $categoryIcon ?> text-danger"></i> <?= htmlspecialchars($categoryName) ?>
                     </h3>
                     <p class="category-subtitle"><?= count($products) ?> produk rekomendasi</p>
                 </div>
@@ -240,34 +397,47 @@ try {
                 <div class="products-grid">
                     <?php foreach ($products as $product): ?>
                         <div class="product-card">
-                            <div class="product-image-container">
-                                <?php if (!empty($product['image']) && file_exists("../assets/img/{$product['image']}")): ?>
-                                    <img src="../assets/img/<?= htmlspecialchars($product['image']) ?>" 
-                                         alt="<?= htmlspecialchars($product['name']) ?>" 
-                                         class="product-image">
-                                <?php else: ?>
-                                    <div class="product-image" style="display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);">
-                                        <i class="fas fa-utensils fa-3x text-muted"></i>
-                                    </div>
-                                <?php endif; ?>
-                                
-                                <!-- Rating Badge -->
-                                <?php if ($product['total_ratings'] > 0): ?>
-                                    <div class="rating-badge">
-                                        <i class="fas fa-star rating-stars"></i>
-                                        <span><?= number_format($product['avg_rating'], 1) ?></span>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
+                            <?php if (!empty($product['image']) && file_exists("../assets/img/{$product['image']}")): ?>
+                                <img src="../assets/img/<?= htmlspecialchars($product['image']) ?>" 
+                                     alt="<?= htmlspecialchars($product['name']) ?>" 
+                                     class="product-image">
+                            <?php else: ?>
+                                <div class="product-image" style="display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); height: 160px;">
+                                    <?php 
+                                    // Menentukan ikon placeholder berdasarkan kategori
+                                    $placeholderIcon = 'fas fa-utensils fa-2x text-muted'; // Default untuk makanan
+                                    $productCategoryLower = strtolower($product['category_name']);
+                                    
+                                    if (strpos($productCategoryLower, 'minuman') !== false) {
+                                        if (strpos($productCategoryLower, 'panas') !== false) {
+                                            $placeholderIcon = 'fas fa-mug-hot fa-2x text-muted'; // Ikon untuk minuman panas
+                                        } elseif (strpos($productCategoryLower, 'dingin') !== false) {
+                                            $placeholderIcon = 'fas fa-glass-water fa-2x text-muted'; // Ikon untuk minuman dingin
+                                        } else {
+                                            $placeholderIcon = 'fas fa-glass-whiskey fa-2x text-muted'; // Ikon umum minuman
+                                        }
+                                    }
+                                    ?>
+                                    <i class="<?= $placeholderIcon ?>"></i>
+                                </div>
+                            <?php endif; ?>
                             
-                            <div class="product-content">
+                            <!-- Rating Badge -->
+                            <?php if ($product['total_ratings'] > 0): ?>
+                                <div class="rating-badge">
+                                    <i class="fas fa-star"></i>
+                                    <span><?= number_format($product['avg_rating'], 1) ?></span>
+                                </div>
+                            <?php endif; ?>
+                            
+                            <div class="card-content">
                                 <h3 class="product-title"><?= htmlspecialchars($product['name']) ?></h3>
                                 <p class="product-description"><?= htmlspecialchars($product['description']) ?></p>
                                 
                                 <div class="product-meta">
                                     <div class="product-rating">
                                         <?php if ($product['total_ratings'] > 0): ?>
-                                            <i class="fas fa-star rating-stars"></i>
+                                            <i class="fas fa-star"></i>
                                             <span><?= number_format($product['avg_rating'], 1) ?></span>
                                         <?php else: ?>
                                             <i class="fas fa-star text-muted"></i>
@@ -275,73 +445,44 @@ try {
                                         <?php endif; ?>
                                     </div>
                                     <div class="product-category">
-                                        <i class="fas fa-tag"></i> <?= htmlspecialchars($product['category_name']) ?>
+                                        <?php 
+                                        // Menentukan ikon kategori untuk meta
+                                        $metaCategoryIcon = 'fas fa-tag'; // Default
+                                        $metaCategoryLower = strtolower($product['category_name']);
+                                        
+                                        if (strpos($metaCategoryLower, 'minuman') !== false) {
+                                            if (strpos($metaCategoryLower, 'panas') !== false) {
+                                                $metaCategoryIcon = 'fas fa-mug-hot'; // Ikon untuk minuman panas
+                                            } elseif (strpos($metaCategoryLower, 'dingin') !== false) {
+                                                $metaCategoryIcon = 'fas fa-glass-water'; // Ikon untuk minuman dingin
+                                            } else {
+                                                $metaCategoryIcon = 'fas fa-glass-whiskey'; // Ikon umum minuman
+                                            }
+                                        } else {
+                                            $metaCategoryIcon = 'fas fa-utensils'; // Ikon untuk makanan
+                                        }
+                                        ?>
+                                        <i class="<?= $metaCategoryIcon ?> text-primary"></i>
+                                        <span><?= htmlspecialchars($product['category_name']) ?></span>
                                     </div>
                                 </div>
                                 
                                 <div class="product-footer">
                                     <div class="product-price">
-                                        <i class="fas fa-tag"></i>
+                                        <i class="fas fa-money-bill text-success"></i>
                                         <span>Rp<?= number_format($product['price'] ?? 15000, 0, ',', '.') ?></span>
                                     </div>
                                     
-                                    <div class="product-actions">
-                                        <?php if (isset($_SESSION['user_id'])): ?>
-                                            <form method="POST" action="../process/rating_process.php" class="rating-form">
-                                                <input type="hidden" name="product_id" value="<?= $product['id'] ?>">
-                                                <button type="submit" class="btn-rating">
-                                                    <i class="fas fa-star"></i> Rating
-                                                </button>
-                                            </form>
-                                            <button class="btn-comment" onclick="toggleComment(<?= $product['id'] ?>)">
-                                                <i class="fas fa-comment"></i> Ulasan
-                                            </button>
-                                        <?php else: ?>
-                                            <a href="login.php" class="btn-rating">
-                                                <i class="fas fa-sign-in-alt"></i> Login untuk Rating
-                                            </a>
-                                        <?php endif; ?>
-                                    </div>
+                                    <?php if (isset($_SESSION['user_id'])): ?>
+                                        <a href="product.php?id=<?= $product['id'] ?>" class="btn-rating">
+                                            <i class="fas fa-star"></i> Rating & Ulasan
+                                        </a>
+                                    <?php else: ?>
+                                        <a href="login.php" class="btn-rating">
+                                            <i class="fas fa-sign-in-alt"></i> Login untuk Rating
+                                        </a>
+                                    <?php endif; ?>
                                 </div>
-                                
-                                <!-- Comment Section -->
-                                <?php if (isset($_SESSION['user_id'])): ?>
-                                    <div class="comment-section" id="comment-<?= $product['id'] ?>" style="display: none;">
-                                        <form class="comment-form" onsubmit="submitComment(event, <?= $product['id'] ?>)">
-                                            <textarea class="comment-input" placeholder="Tulis ulasan Anda..." required></textarea>
-                                            <button type="submit" class="btn-submit-comment">
-                                                <i class="fas fa-paper-plane"></i> Kirim Ulasan
-                                            </button>
-                                        </form>
-                                        
-                                        <!-- Existing Comments -->
-                                        <div class="comments-list" id="comments-<?= $product['id'] ?>">
-                                            <?php
-                                            $commentsStmt = $pdo->prepare("
-                                                SELECT c.*, u.username 
-                                                FROM comments c 
-                                                JOIN users u ON c.user_id = u.id 
-                                                WHERE c.product_id = ? 
-                                                ORDER BY c.created_at DESC 
-                                                LIMIT 5
-                                            ");
-                                            $commentsStmt->execute([$product['id']]);
-                                            $comments = $commentsStmt->fetchAll();
-                                            
-                                            foreach ($comments as $comment): ?>
-                                                <div class="comment-item">
-                                                    <div class="comment-header">
-                                                        <strong><?= htmlspecialchars($comment['username']) ?></strong>
-                                                        <small class="text-muted"><?= date('d M Y H:i', strtotime($comment['created_at'])) ?></small>
-                                                    </div>
-                                                    <div class="comment-text">
-                                                        <?= htmlspecialchars($comment['comment']) ?>
-                                                    </div>
-                                                </div>
-                                            <?php endforeach; ?>
-                                        </div>
-                                    </div>
-                                <?php endif; ?>
                             </div>
                         </div>
                     <?php endforeach; ?>
@@ -351,349 +492,302 @@ try {
     <?php endif; ?>
 
 <style>
-.btn-rating {
-    background: #e74c3c;
-    color: white;
-    border: none;
-    padding: 0.6rem 1.2rem;
-    border-radius: 25px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    transition: all 0.3s ease;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    white-space: nowrap;
-    margin-bottom: 0.5rem;
-}
-
-.btn-rating:hover {
-    background: #c0392b;
-    transform: translateY(-2px);
-    color: white;
-    text-decoration: none;
-    box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
-}
-
-.rating-form {
-    margin: 0;
-    display: inline-flex;
-    align-items: center;
-}
-
-/* Product Footer Responsive */
-.product-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-    gap: 1rem;
-}
-
-.product-price {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #dc3545;
-    flex-shrink: 0;
-}
-
-.product-actions {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    align-items: center;
-}
-
-.product-actions > * {
-    align-self: center;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .product-footer {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.75rem;
+    /* Category Section Styling */
+    .category-section {
+        margin-bottom: 3rem;
     }
     
-    .product-actions {
-        width: 100%;
-        justify-content: flex-start;
+    .category-header {
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 2px solid #f1f3f4;
+    }
+    
+    .category-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: #2c3e50;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
         gap: 0.5rem;
     }
     
-    .btn-rating, .btn-comment {
+    .category-subtitle {
+        color: #7f8c8d;
+        font-size: 0.9rem;
+        margin: 0;
+    }
+    
+    /* Products Grid */
+    .products-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1rem;
+        margin-top: 2rem;
+        width: 100%;
+        max-width: 100%;
+    }
+    
+    /* Product Card - Ukuran lebih kecil dan compact */
+    .product-card {
+        background: #fff;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+        border: none;
+        position: relative;
+        max-width: 280px;
+        margin: 0 auto;
+    }
+    
+    .product-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    }
+    
+    .product-image {
+        width: 100%;
+        height: 160px;
+        object-fit: cover;
+        display: block;
+    }
+    
+    .rating-badge {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        background: rgba(0, 0, 0, 0.8);
+        color: #ffc107;
+        padding: 0.3rem 0.6rem;
+        border-radius: 15px;
+        font-size: 0.75rem;
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-weight: 600;
+        z-index: 2;
+    }
+    
+    .rating-badge i {
+        color: #ffc107;
+        font-size: 0.7rem;
+    }
+    
+    .card-content {
+        padding: 1rem;
+    }
+    
+    .product-title {
+        color: #2c3e50;
+        margin-bottom: 0.4rem;
+        font-size: 1.1rem;
+        font-weight: 600;
+        line-height: 1.3;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+    }
+    
+    .product-description {
+        color: #6c757d;
+        margin-bottom: 0.8rem;
+        line-height: 1.4;
+        font-size: 0.85rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+    }
+    
+    .product-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    
+    .product-rating {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
         font-size: 0.8rem;
-        padding: 0.5rem 1rem;
-        flex: 1;
-        justify-content: center;
-        min-width: 120px;
-    }
-}
-
-@media (max-width: 576px) {
-    .product-actions {
-        flex-direction: column;
-        width: 100%;
+        font-weight: 500;
+        color: #495057;
     }
     
-    .btn-rating, .btn-comment {
-        width: 100%;
-        justify-content: center;
-        margin-bottom: 0.25rem;
-    }
-}
-
-/* Category Section Styling */
-.category-section {
-    margin-bottom: 3rem;
-}
-
-.category-header {
-    margin-bottom: 1.5rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 2px solid #dc3545;
-}
-
-/* Override products-grid for recommendation page */
-.products-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 1.5rem;
-    margin-bottom: 2rem;
-    align-items: start; /* Key fix: prevent cards from stretching */
-}
-
-/* Ensure product cards maintain their position */
-.product-card {
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    overflow: hidden;
-    transition: all 0.3s ease;
-    border: 1px solid #e9ecef;
-    position: relative; /* Important for stable positioning */
-    height: fit-content; /* Prevent unnecessary stretching */
-}
-
-.product-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
-}
-
-/* Comment section with smooth animation */
-.comment-section {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e9ecef;
-    transition: all 0.3s ease;
-    overflow: hidden;
-}
-
-.category-title {
-    color: #2c3e50;
-    font-size: 1.8rem;
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-}
-
-.category-subtitle {
-    color: #6c757d;
-    font-size: 0.9rem;
-    margin: 0;
-}
-
-/* Comment Section */
-.comment-section {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid #e9ecef;
-}
-
-.comment-form {
-    margin-bottom: 1rem;
-}
-
-.comment-input {
-    width: 100%;
-    min-height: 80px;
-    padding: 0.75rem;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    resize: vertical;
-    font-size: 0.9rem;
-    margin-bottom: 0.5rem;
-}
-
-.comment-input:focus {
-    outline: none;
-    border-color: #dc3545;
-    box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.2);
-}
-
-.btn-comment {
-    background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
-    color: white;
-    border: none;
-    padding: 0.6rem 1.2rem;
-    border-radius: 25px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    white-space: nowrap;
-    margin-bottom: 0.5rem;
-}
-
-.btn-comment:hover {
-    background: linear-gradient(135deg, #138496 0%, #0c5460 100%);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(23, 162, 184, 0.4);
-    color: white;
-}
-
-.btn-submit-comment {
-    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 25px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.btn-submit-comment:hover {
-    background: linear-gradient(135deg, #218838 0%, #1e7e34 100%);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
-}
-
-.comments-list {
-    max-height: 300px;
-    overflow-y: auto;
-}
-
-.comment-item {
-    background: #f8f9fa;
-    padding: 0.75rem;
-    border-radius: 8px;
-    margin-bottom: 0.5rem;
-}
-
-.comment-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.5rem;
-}
-
-.comment-text {
-    color: #495057;
-    font-size: 0.9rem;
-    line-height: 1.4;
-}
-</style>
-
-<script>
-// Toggle comment section with smooth animation
-function toggleComment(productId) {
-    const commentSection = document.getElementById('comment-' + productId);
-    
-    if (commentSection.style.display === 'none' || commentSection.style.display === '') {
-        // Show with slide down effect
-        commentSection.style.display = 'block';
-        commentSection.style.opacity = '0';
-        commentSection.style.maxHeight = '0';
-        commentSection.style.overflow = 'hidden';
-        
-        // Force reflow
-        commentSection.offsetHeight;
-        
-        // Animate in
-        commentSection.style.transition = 'all 0.3s ease';
-        commentSection.style.opacity = '1';
-        commentSection.style.maxHeight = '500px';
-        
-        // Clean up after animation
-        setTimeout(() => {
-            commentSection.style.maxHeight = 'none';
-            commentSection.style.overflow = 'visible';
-        }, 300);
-    } else {
-        // Hide with slide up effect
-        commentSection.style.transition = 'all 0.3s ease';
-        commentSection.style.opacity = '0';
-        commentSection.style.maxHeight = '0';
-        commentSection.style.overflow = 'hidden';
-        
-        setTimeout(() => {
-            commentSection.style.display = 'none';
-        }, 300);
-    }
-}
-
-// Submit comment
-function submitComment(event, productId) {
-    event.preventDefault();
-    
-    const form = event.target;
-    const commentText = form.querySelector('.comment-input').value.trim();
-    
-    if (!commentText) {
-        alert('Mohon tulis ulasan Anda');
-        return;
+    .product-rating i {
+        color: #ffc107;
+        font-size: 0.75rem;
     }
     
-    // Create FormData
-    const formData = new FormData();
-    formData.append('product_id', productId);
-    formData.append('comment', commentText);
+    .product-category {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        font-size: 0.75rem;
+        color: #6c757d;
+        font-weight: 500;
+    }
     
-    // Send to server
-    fetch('../process/comment_process.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Clear the form
-            form.querySelector('.comment-input').value = '';
-            
-            // Add new comment to the list
-            const commentsList = document.getElementById('comments-' + productId);
-            const newComment = document.createElement('div');
-            newComment.className = 'comment-item';
-            newComment.innerHTML = `
-                <div class="comment-header">
-                    <strong>${data.username}</strong>
-                    <small class="text-muted">Baru saja</small>
-                </div>
-                <div class="comment-text">${commentText}</div>
-            `;
-            commentsList.insertBefore(newComment, commentsList.firstChild);
-            
-            alert('Ulasan berhasil ditambahkan!');
-        } else {
-            alert('Gagal menambahkan ulasan: ' + data.message);
+    .product-category i {
+        font-size: 0.7rem;
+    }
+    
+    .product-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: auto;
+        gap: 0.8rem;
+    }
+    
+    .product-price {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #28a745;
+    }
+    
+    .product-price i {
+        color: #28a745;
+        font-size: 0.9rem;
+    }
+    
+    .btn-rating {
+        background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+        color: white;
+        border: none;
+        padding: 0.5rem 0.8rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        white-space: nowrap;
+        box-shadow: 0 2px 6px rgba(231, 76, 60, 0.3);
+    }
+    
+    .btn-rating:hover {
+        background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
+        transform: translateY(-1px);
+        color: white;
+        text-decoration: none;
+        box-shadow: 0 4px 12px rgba(231, 76, 60, 0.4);
+    }
+    
+    .btn-rating i {
+        font-size: 0.7rem;
+    }
+    
+    /* Badge styling for "Baru" items */
+    .product-rating .text-muted {
+        color: #adb5bd !important;
+    }
+    
+    /* Responsive Design */
+    @media (max-width: 768px) {
+        .products-grid {
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 0.8rem;
         }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('Terjadi kesalahan saat mengirim ulasan');
-    });
-}
-</script>
+        
+        .category-title {
+            font-size: 1.3rem;
+        }
+        
+        .product-card {
+            max-width: 100%;
+        }
+        
+        .product-footer {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.6rem;
+        }
+        
+        .btn-rating {
+            width: 100%;
+            justify-content: center;
+            padding: 0.6rem;
+            font-size: 0.8rem;
+        }
+    }
+    
+    @media (max-width: 576px) {
+        .products-grid {
+            grid-template-columns: 1fr 1fr;
+            gap: 0.6rem;
+        }
+        
+        .card-content {
+            padding: 0.8rem;
+        }
+        
+        .product-meta {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.4rem;
+        }
+        
+        .product-image {
+            height: 140px;
+        }
+        
+        .product-title {
+            font-size: 1rem;
+        }
+        
+        .product-description {
+            font-size: 0.8rem;
+            -webkit-line-clamp: 1;
+        }
+    }
+    
+    @media (max-width: 480px) {
+        .products-grid {
+            grid-template-columns: 1fr;
+            gap: 0.8rem;
+        }
+        
+        .product-card {
+            margin: 0;
+            max-width: 100%;
+        }
+        
+        .card-content {
+            padding: 1rem;
+        }
+        
+        .category-title {
+            font-size: 1.2rem;
+        }
+        
+        .product-title {
+            font-size: 1.1rem;
+        }
+        
+        .btn-rating {
+            font-size: 0.8rem;
+            padding: 0.7rem;
+        }
+        
+        .product-image {
+            height: 160px;
+        }
+    }
+</style>
 
 <?php
 include '../layouts/footer.php';

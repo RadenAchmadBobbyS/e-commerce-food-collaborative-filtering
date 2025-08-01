@@ -167,13 +167,9 @@ if ($categoryFilter) {
                             <span>Rp<?= number_format($product['price'], 0, ',', '.') ?></span>
                         </div>
                         
-                        <?php if (isset($_SESSION['user_id'])): ?>
-                            <form method="POST" action="../process/rating_process.php" class="rating-form">
-                                <input type="hidden" name="product_id" value="<?= $product['id'] ?>">
-                                <button type="submit" class="btn-rating">
-                                    <i class="fas fa-star"></i> Rating
-                                </button>
-                            </form>
+                        <?php if (isset($_SESSION['user_id'])): ?><a href="product.php?id=<?= $product['id'] ?>" class="btn-rating">
+                                <i class="fas fa-star"></i> Rating & Ulasan
+                            </a>
                         <?php else: ?>
                             <a href="login.php" class="btn-rating">
                                 <i class="fas fa-sign-in-alt"></i> Login untuk Rating
@@ -276,13 +272,9 @@ if ($categoryFilter) {
                             <span>Rp<?= number_format($product['price'], 0, ',', '.') ?></span>
                         </div>
                         
-                        <?php if (isset($_SESSION['user_id'])): ?>
-                            <form method="POST" action="../process/rating_process.php" class="rating-form">
-                                <input type="hidden" name="product_id" value="<?= $product['id'] ?>">
-                                <button type="submit" class="btn-rating">
-                                    <i class="fas fa-star"></i> Rating
-                                </button>
-                            </form>
+                        <?php if (isset($_SESSION['user_id'])): ?><a href="product.php?id=<?= $product['id'] ?>" class="btn-rating">
+                                <i class="fas fa-star"></i> Rating & Ulasan
+                            </a>
                         <?php else: ?>
                             <a href="login.php" class="btn-rating">
                                 <i class="fas fa-sign-in-alt"></i> Login untuk Rating

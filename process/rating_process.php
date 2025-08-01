@@ -2,6 +2,9 @@
 session_start();
 require '../config/db.php';
 
+// Set content type for faster response
+header('Content-Type: text/html; charset=UTF-8');
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header('Location: ../pages/home.php');
     exit;
@@ -16,48 +19,50 @@ try {
     $user_id = $_SESSION['user_id'];
     $product_id = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
     $rating = isset($_POST['rating']) ? intval($_POST['rating']) : 0;
+    $comment = isset($_POST['comment']) ? trim($_POST['comment']) : '';
     
-    // Basic validation - redirect tanpa pesan error
-    if ($product_id <= 0) {
-        header("Location: ../pages/home.php");
-        exit;
-    }
-    
-    if ($rating <= 0) {
-        header("Location: ../pages/product.php?id=$product_id");
-        exit;
-    }
-
-    // Check if product exists - redirect tanpa pesan error
-    $productStmt = $pdo->prepare("SELECT id FROM products WHERE id = ?");
-    $productStmt->execute([$product_id]);
-    if (!$productStmt->fetch()) {
+    // Quick validation - redirect immediately if invalid
+    if ($product_id <= 0 || $rating <= 0 || $rating > 5) {
         header("Location: ../pages/home.php");
         exit;
     }
 
-    // Check if user already rated this product
-    $existingStmt = $pdo->prepare("SELECT id FROM ratings WHERE user_id = ? AND product_id = ?");
-    $existingStmt->execute([$user_id, $product_id]);
-    $existingRating = $existingStmt->fetch();
+    // Validate comment length if provided (quick check)
+    if (!empty($comment) && strlen($comment) > 1000) {
+        header("Location: ../pages/product.php?id=$product_id&message=" . urlencode("Ulasan terlalu panjang (maksimal 1000 karakter)") . "&type=error");
+        exit;
+    }
+
+    // Use prepared statement with optimized query
+    // Check if user already rated this product in one query
+    $checkStmt = $pdo->prepare("SELECT id FROM ratings WHERE user_id = ? AND product_id = ? LIMIT 1");
+    $checkStmt->execute([$user_id, $product_id]);
+    $existingRating = $checkStmt->fetch();
 
     if ($existingRating) {
-        // Update existing rating
-        $stmt = $pdo->prepare("UPDATE ratings SET rating = ?, updated_at = NOW() WHERE user_id = ? AND product_id = ?");
-        $stmt->execute([$rating, $user_id, $product_id]);
-        $message = "Rating Anda berhasil diperbarui!";
+        // Update existing rating and comment - optimized query
+        $stmt = $pdo->prepare("UPDATE ratings SET rating = ?, comment = ? WHERE user_id = ? AND product_id = ?");
+        $stmt->execute([$rating, $comment, $user_id, $product_id]);
+        $message = "Rating dan ulasan berhasil diperbarui!";
     } else {
-        // Insert new rating
-        $stmt = $pdo->prepare("INSERT INTO ratings (user_id, product_id, rating) VALUES (?, ?, ?)");
-        $stmt->execute([$user_id, $product_id, $rating]);
-        $message = "Terima kasih! Rating Anda berhasil disimpan.";
+        // Insert new rating with comment - simplified query
+        $stmt = $pdo->prepare("INSERT INTO ratings (user_id, product_id, rating, comment) VALUES (?, ?, ?, ?)");
+        $stmt->execute([$user_id, $product_id, $rating, $comment]);
+        $message = "Rating dan ulasan berhasil disimpan!";
     }
 
+    // Immediate redirect for faster response
     header("Location: ../pages/product.php?id=$product_id&message=" . urlencode($message) . "&type=success");
+    exit;
 
 } catch (Exception $e) {
+    // Simplified error handling
     $product_id = isset($_POST['product_id']) ? intval($_POST['product_id']) : 0;
-    header("Location: ../pages/product.php?id=$product_id");
+    if ($product_id > 0) {
+        header("Location: ../pages/product.php?id=$product_id&message=" . urlencode("Terjadi kesalahan, silakan coba lagi") . "&type=error");
+    } else {
+        header("Location: ../pages/home.php");
+    }
     exit;
 }
 ?>
