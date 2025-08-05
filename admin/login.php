@@ -78,7 +78,7 @@
                         <div class="text-center">
                             <small class="text-muted">
                                 <strong>Demo Admin:</strong><br>
-                                Email: admin@foodrec.com<br>
+                                Email: admin@wrkp.com<br>
                                 Password: password
                             </small>
                         </div>

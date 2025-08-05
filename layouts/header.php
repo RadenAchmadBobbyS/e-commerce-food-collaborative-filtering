@@ -440,6 +440,12 @@ if (in_array($current_page, $protected_pages) && !isset($_SESSION['user_id'])) {
                             </a>
                         </li>
                         
+                        <li class="nav-item">
+                            <a class="nav-link <?= (basename($_SERVER['PHP_SELF']) == 'evaluation.php') ? 'active' : '' ?>" href="evaluation.php">
+                                <i class="fas fa-chart-line"></i> Evaluasi MAE
+                            </a>
+                        </li>
+                        
                         <li class="nav-item dropdown user-dropdown">
                             <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                                 <i class="fas fa-user-circle"></i> Halo, <?= htmlspecialchars($_SESSION['user_name'] ?? 'Pengguna') ?>
